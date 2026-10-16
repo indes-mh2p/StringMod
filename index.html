@@ -1,0 +1,468 @@
+<title>HMI String Table Editor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one sticky toolbar (file + stats + export) over a dense editable table; instrument-cluster neutrals, signal-orange accent. */
+:root {
+  --bg: #f3f4f6;
+  --surface: #ffffff;
+  --surface-2: #e9ebef;
+  --fg: #1b1e24;
+  --muted: #5c6370;
+  --line: #d3d7de;
+  --accent: #d9641a;
+  --accent-fg: #ffffff;
+  --danger: #b9321f;
+  --ok: #2b7a4b;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171b; --surface: #1d2026; --surface-2: #262a32; --fg: #e8eaee; --muted: #9aa2ae;
+    --line: #343941; --accent: #f08a3c; --accent-fg: #1b1e24; --danger: #e8604a; --ok: #5cc182;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171b; --surface: #1d2026; --surface-2: #262a32; --fg: #e8eaee; --muted: #9aa2ae;
+  --line: #343941; --accent: #f08a3c; --accent-fg: #1b1e24; --danger: #e8604a; --ok: #5cc182;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+* { box-sizing: border-box; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.topbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+}
+.brand { display: flex; flex-direction: column; min-width: 0; }
+.brand h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+.brand .file { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.stats { display: flex; gap: 14px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+.stats b { color: var(--fg); font-weight: 500; }
+.spacer { flex: 1; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface-2); border-radius: 6px;
+  padding: 7px 12px; font-weight: 500; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+main {
+  padding-block: 16px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+.drop {
+  border: 2px dashed var(--line); border-radius: 10px; background: var(--surface);
+  padding: 22px; text-align: center; color: var(--muted); transition: border-color .15s, background .15s;
+}
+.drop.over { border-color: var(--accent); background: var(--surface-2); color: var(--fg); }
+.drop strong { color: var(--fg); font-weight: 500; }
+.drop input { display: none; }
+.drop .hint { font-size: 12px; margin-top: 6px; }
+.drop label { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+.controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.controls input[type="search"] {
+  flex: 1 1 240px; min-width: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+}
+.controls label.chk { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+
+.msg { font-size: 13px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); }
+.msg.err { border-color: var(--danger); color: var(--danger); }
+.msg.ok { border-color: var(--ok); color: var(--ok); }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); min-width: 0; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; }
+thead th {
+  position: sticky; top: 0; background: var(--surface-2); text-align: left; font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); z-index: 1;
+}
+tbody td { border-bottom: 1px solid var(--line); padding: 3px 6px; vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr.dirty td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+tbody tr.dup td.id input { border-color: var(--danger); color: var(--danger); }
+td.id { width: 7.5em; }
+td.flag { width: 8.5em; }
+td.ops { width: 5.5em; white-space: nowrap; text-align: right; }
+td input, td select {
+  width: 100%; padding: 5px 7px; border: 1px solid transparent; border-radius: 4px; background: transparent;
+}
+td input:hover, td select:hover { border-color: var(--line); }
+td input:focus, td select:focus { border-color: var(--accent); background: var(--surface); outline: none; }
+td.id input, td.flag select { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+td.text input { font-family: var(--font-mono); font-size: 13px; }
+.rowbtn {
+  width: 26px; height: 26px; border-radius: 5px; border: 1px solid var(--line); background: transparent; color: var(--muted);
+  font-family: var(--font-mono); font-size: 15px; line-height: 1; padding: 0;
+}
+.rowbtn:hover { color: var(--fg); border-color: var(--muted); }
+.rowbtn.del:hover { color: var(--danger); border-color: var(--danger); }
+.empty td { color: var(--muted); text-align: center; padding: 28px; }
+
+.footer { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.footer .note { font-size: 12px; color: var(--muted); max-width: 60ch; }
+.format { font-size: 12px; color: var(--muted); font-family: var(--font-mono); white-space: pre-wrap; border-left: 2px solid var(--line); padding-left: 12px; margin: 0; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 600px) { .brand .file { max-width: 70vw; } .stats { gap: 10px; } }
+</style>
+
+<header class="topbar">
+  <div class="brand">
+    <h1>HMI String Table Editor</h1>
+    <div class="file" id="fileName">no file loaded</div>
+  </div>
+  <div class="stats">
+    <span>N <b id="statN">0</b></span>
+    <span>strings <b id="statCount">0</b></span>
+    <span>bytes <b id="statBytes">0</b></span>
+    <span>changed <b id="statDirty">0</b></span>
+  </div>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button class="btn" id="btnCsv" type="button">Export CSV</button>
+    <button class="btn primary" id="btnExport" type="button">Export .data</button>
+  </div>
+</header>
+
+<main>
+  <div class="drop" id="drop">
+    <strong>Drop a strings_*.data file here</strong> or <label for="fileInput">browse</label>
+    <input type="file" id="fileInput">
+    <div class="hint">You can also drop a CSV exported from this page (columns id, flag, text) to continue editing it.</div>
+  </div>
+
+  <div class="msg" id="msg" hidden></div>
+
+  <div class="controls">
+    <input type="search" id="filter" placeholder="Filter by ID or text…" autocomplete="off">
+    <label class="chk"><input type="checkbox" id="showEmpty"> show empty IDs</label>
+    <button class="btn" id="btnAddEnd" type="button">+ Add entry</button>
+    <button class="btn" id="btnClear" type="button">Clear all</button>
+  </div>
+
+  <div class="tablewrap">
+    <table id="tbl">
+      <thead><tr><th>ID</th><th>Flag</th><th>Text</th><th></th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div class="note">Export writes N = highest ID + 1. IDs missing from the table become empty strings with flag 0. Changed rows are marked on the left edge; duplicate IDs are shown in red and block export.</div>
+    <div class="actions">
+      <button class="btn" id="btnCsv2" type="button">Export CSV</button>
+      <button class="btn primary" id="btnExport2" type="button">Export .data</button>
+    </div>
+  </div>
+
+  <details>
+    <summary>File format reference</summary>
+    <pre class="format">uint32 BE      N            number of string IDs
+uint32 BE[N+1] offset[]     start of string i in the text blob; offset[N] = blob length
+bytes          blob         UTF-8 strings back-to-back, no terminators (length = offset[i+1] - offset[i])
+uint8[N]       flag[]       per-ID status byte: 8 = translated, 0 = empty/untranslated, 2 = other</pre>
+  </details>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  // ---------- state ----------
+  // rows: [{id:number, flag:number, text:string, orig:string|null, origFlag:number|null}]
+  let rows = [];
+  let baseName = "strings_en_US";
+
+  const $ = (id) => document.getElementById(id);
+  const tbody = $("tbody"), msg = $("msg");
+  const filterEl = $("filter"), showEmptyEl = $("showEmpty");
+
+  // ---------- parse ----------
+  function parseData(buf) {
+    const dv = new DataView(buf);
+    if (buf.byteLength < 8) throw new Error("File is too short to be a string table.");
+    const n = dv.getUint32(0, false);
+    const tableEnd = 4 + 4 * (n + 1);
+    if (tableEnd > buf.byteLength) throw new Error("Offset table runs past end of file (N=" + n + ").");
+    const offs = new Array(n + 1);
+    for (let i = 0; i <= n; i++) offs[i] = dv.getUint32(4 + 4 * i, false);
+    const blobLen = offs[n];
+    if (tableEnd + blobLen > buf.byteLength) throw new Error("Text blob is truncated.");
+    const blob = new Uint8Array(buf, tableEnd, blobLen);
+    const flags = new Uint8Array(buf, tableEnd + blobLen, Math.min(n, buf.byteLength - tableEnd - blobLen));
+    const dec = new TextDecoder("utf-8");
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const a = offs[i], b = offs[i + 1];
+      if (b < a || b > blobLen) throw new Error("Offset table is not monotonic at ID " + i + ".");
+      const text = dec.decode(blob.subarray(a, b));
+      const flag = i < flags.length ? flags[i] : 0;
+      if (text.length) out.push({ id: i, flag, text, orig: text, origFlag: flag });
+    }
+    return { n, rows: out, flagsMissing: flags.length < n };
+  }
+
+  function parseCsv(str) {
+    const recs = []; let i = 0, field = "", rec = [], q = false;
+    while (i < str.length) {
+      const c = str[i];
+      if (q) {
+        if (c === '"') { if (str[i + 1] === '"') { field += '"'; i++; } else q = false; }
+        else field += c;
+      } else if (c === '"') q = true;
+      else if (c === "," || c === "\t") { rec.push(field); field = ""; }
+      else if (c === "\n" || c === "\r") { if (c === "\r" && str[i + 1] === "\n") i++; rec.push(field); recs.push(rec); rec = []; field = ""; }
+      else field += c;
+      i++;
+    }
+    if (field.length || rec.length) { rec.push(field); recs.push(rec); }
+    if (!recs.length) throw new Error("CSV is empty.");
+    const head = recs[0].map((h) => h.trim().toLowerCase());
+    const ci = head.indexOf("id"), cf = head.indexOf("flag"), ct = head.indexOf("text");
+    if (ci < 0 || ct < 0) throw new Error("CSV needs columns id, flag, text.");
+    const out = [];
+    for (const r of recs.slice(1)) {
+      if (!r.length || r.every((x) => x.trim() === "")) continue;
+      const id = parseInt(r[ci], 10);
+      if (!Number.isInteger(id) || id < 0) throw new Error("Bad id: " + r[ci]);
+      const text = r[ct] ?? "";
+      const flag = cf >= 0 && r[cf].trim() !== "" ? parseInt(r[cf], 10) : (text ? 8 : 0);
+      out.push({ id, flag, text, orig: text, origFlag: flag });
+    }
+    return out;
+  }
+
+  // ---------- pack ----------
+  function packData() {
+    const enc = new TextEncoder();
+    const sorted = rows.slice().sort((a, b) => a.id - b.id);
+    const n = sorted.length ? sorted[sorted.length - 1].id + 1 : 0;
+    const byId = new Map(sorted.map((r) => [r.id, r]));
+    const parts = []; const offsets = new Uint32Array(n + 1); const flags = new Uint8Array(n);
+    let pos = 0;
+    for (let i = 0; i < n; i++) {
+      offsets[i] = pos;
+      const r = byId.get(i);
+      if (r) { const b = enc.encode(r.text); parts.push(b); pos += b.length; flags[i] = r.flag & 0xff; }
+    }
+    offsets[n] = pos;
+    const out = new Uint8Array(4 + 4 * (n + 1) + pos + n);
+    const dv = new DataView(out.buffer);
+    dv.setUint32(0, n, false);
+    for (let i = 0; i <= n; i++) dv.setUint32(4 + 4 * i, offsets[i], false);
+    let p = 4 + 4 * (n + 1);
+    for (const b of parts) { out.set(b, p); p += b.length; }
+    out.set(flags, p);
+    return out;
+  }
+
+  function toCsv() {
+    const esc = (s) => /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    const lines = ["id,flag,text"];
+    for (const r of rows.slice().sort((a, b) => a.id - b.id)) lines.push(r.id + "," + r.flag + "," + esc(r.text));
+    return lines.join("\n") + "\n";
+  }
+
+  // ---------- minimal ZIP (stored, no compression) for the artifact's download sandbox ----------
+  const crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = crcTable[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+  function makeZip(name, data) {
+    const nameB = new TextEncoder().encode(name); const crc = crc32(data);
+    const local = new Uint8Array(30 + nameB.length), ld = new DataView(local.buffer);
+    ld.setUint32(0, 0x04034b50, true); ld.setUint16(4, 20, true); ld.setUint16(6, 0x0800, true); ld.setUint16(8, 0, true);
+    ld.setUint16(10, 0, true); ld.setUint16(12, 0x21, true); ld.setUint32(14, crc, true); ld.setUint32(18, data.length, true);
+    ld.setUint32(22, data.length, true); ld.setUint16(26, nameB.length, true); ld.setUint16(28, 0, true); local.set(nameB, 30);
+    const cen = new Uint8Array(46 + nameB.length), cd = new DataView(cen.buffer);
+    cd.setUint32(0, 0x02014b50, true); cd.setUint16(4, 20, true); cd.setUint16(6, 20, true); cd.setUint16(8, 0x0800, true);
+    cd.setUint16(10, 0, true); cd.setUint16(12, 0, true); cd.setUint16(14, 0x21, true); cd.setUint32(16, crc, true);
+    cd.setUint32(20, data.length, true); cd.setUint32(24, data.length, true); cd.setUint16(28, nameB.length, true);
+    cd.setUint16(30, 0, true); cd.setUint16(32, 0, true); cd.setUint16(34, 0, true); cd.setUint16(36, 0, true);
+    cd.setUint32(38, 0, true); cd.setUint32(42, 0, true); cen.set(nameB, 46);
+    const cdOff = local.length + data.length;
+    const end = new Uint8Array(22), ed = new DataView(end.buffer);
+    ed.setUint32(0, 0x06054b50, true); ed.setUint16(4, 0, true); ed.setUint16(6, 0, true); ed.setUint16(8, 1, true);
+    ed.setUint16(10, 1, true); ed.setUint32(12, cen.length, true); ed.setUint32(16, cdOff, true); ed.setUint16(20, 0, true);
+    const out = new Uint8Array(cdOff + cen.length + end.length);
+    out.set(local, 0); out.set(data, local.length); out.set(cen, cdOff); out.set(end, cdOff + cen.length);
+    return out;
+  }
+
+  // ---------- download (local file: direct; published artifact: via downloads capability) ----------
+  let downloadsNs = null, inArtifact = false;
+  if (window.claude && typeof window.claude.use === "function") {
+    inArtifact = true;
+    window.claude.use("downloads").then((ns) => { downloadsNs = ns; }).catch(() => {});
+  }
+  async function deliver(filename, data, mime) {
+    if (inArtifact) {
+      if (!downloadsNs) { showMsg("Saving files isn't available in this view. Open the page in claude.ai, or download the HTML and run it locally.", "err"); return; }
+      let fname = filename, payload = data;
+      if (/\.data$/i.test(filename)) { fname = filename.replace(/\.data$/i, ".zip"); payload = makeZip(filename, data); }
+      try {
+        await downloadsNs.save({ filename: fname, data: payload instanceof Uint8Array ? new Blob([payload]) : payload });
+        showMsg("Saved " + fname + (fname !== filename ? " (contains " + filename + ")" : "") + ".", "ok");
+      } catch (e) {
+        if (e && e.code === "declined") showMsg("Save cancelled.", "");
+        else showMsg("Could not save: " + (e && e.message ? e.message : e), "err");
+      }
+      return;
+    }
+    const blob = new Blob([data], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    showMsg("Exported " + filename + ".", "ok");
+  }
+
+  // ---------- UI ----------
+  function showMsg(text, kind) { msg.textContent = text; msg.className = "msg" + (kind ? " " + kind : ""); msg.hidden = !text; }
+
+  function dupIds() {
+    const seen = new Map(), d = new Set();
+    for (const r of rows) { if (seen.has(r.id)) d.add(r.id); seen.set(r.id, true); }
+    return d;
+  }
+  function isDirty(r) { return r.orig === null || r.text !== r.orig || r.flag !== r.origFlag; }
+
+  function updateStats() {
+    const packed = rows.length ? packData().length : 0;
+    $("statN").textContent = rows.length ? Math.max(...rows.map((r) => r.id)) + 1 : 0;
+    $("statCount").textContent = rows.filter((r) => r.text.length).length;
+    $("statBytes").textContent = packed.toLocaleString();
+    $("statDirty").textContent = rows.filter(isDirty).length;
+    const hasDup = dupIds().size > 0;
+    for (const id of ["btnExport", "btnExport2"]) $(id).disabled = hasDup || !rows.length;
+  }
+
+  function nextFreeId(after) {
+    const used = new Set(rows.map((r) => r.id));
+    let id = after + 1; while (used.has(id)) id++; return id;
+  }
+
+  function render() {
+    const q = filterEl.value.trim().toLowerCase();
+    const showEmpty = showEmptyEl.checked;
+    const dups = dupIds();
+    const sorted = rows.slice().sort((a, b) => a.id - b.id);
+    const frag = document.createDocumentFragment();
+    let shown = 0;
+    for (const r of sorted) {
+      if (!showEmpty && !r.text.length && !isDirty(r)) continue;
+      if (q && !(String(r.id).includes(q) || r.text.toLowerCase().includes(q))) continue;
+      shown++;
+      const tr = document.createElement("tr");
+      tr.className = (isDirty(r) ? "dirty" : "") + (dups.has(r.id) ? " dup" : "");
+
+      const tdId = document.createElement("td"); tdId.className = "id";
+      const inId = document.createElement("input"); inId.type = "number"; inId.min = "0"; inId.step = "1"; inId.value = r.id; inId.setAttribute("aria-label", "ID");
+      inId.addEventListener("change", () => { const v = parseInt(inId.value, 10); if (Number.isInteger(v) && v >= 0) r.id = v; else inId.value = r.id; render(); });
+      tdId.appendChild(inId);
+
+      const tdFlag = document.createElement("td"); tdFlag.className = "flag";
+      const sel = document.createElement("select"); sel.setAttribute("aria-label", "Flag");
+      const opts = [[8, "8 · translated"], [0, "0 · untranslated"], [2, "2 · other"]];
+      if (!opts.some((o) => o[0] === r.flag)) opts.push([r.flag, String(r.flag)]);
+      for (const [v, label] of opts) { const o = document.createElement("option"); o.value = v; o.textContent = label; if (v === r.flag) o.selected = true; sel.appendChild(o); }
+      sel.addEventListener("change", () => { r.flag = parseInt(sel.value, 10); tr.classList.toggle("dirty", isDirty(r)); updateStats(); });
+      tdFlag.appendChild(sel);
+
+      const tdText = document.createElement("td"); tdText.className = "text";
+      const inText = document.createElement("input"); inText.type = "text"; inText.value = r.text; inText.spellcheck = false; inText.setAttribute("aria-label", "Text");
+      inText.addEventListener("input", () => { r.text = inText.value; tr.classList.toggle("dirty", isDirty(r)); });
+      inText.addEventListener("change", updateStats);
+      tdText.appendChild(inText);
+
+      const tdOps = document.createElement("td"); tdOps.className = "ops";
+      const add = document.createElement("button"); add.type = "button"; add.className = "rowbtn"; add.textContent = "+"; add.title = "Insert entry after this one";
+      add.addEventListener("click", () => { const nid = nextFreeId(r.id); rows.push({ id: nid, flag: 8, text: "", orig: null, origFlag: null }); render(); focusRow(nid); });
+      const del = document.createElement("button"); del.type = "button"; del.className = "rowbtn del"; del.textContent = "−"; del.title = "Remove this entry";
+      del.addEventListener("click", () => { rows.splice(rows.indexOf(r), 1); render(); });
+      tdOps.append(add, " ", del);
+
+      tr.append(tdId, tdFlag, tdText, tdOps);
+      frag.appendChild(tr);
+    }
+    tbody.replaceChildren(frag);
+    if (!shown) {
+      const tr = document.createElement("tr"); tr.className = "empty"; const td = document.createElement("td"); td.colSpan = 4;
+      td.textContent = rows.length ? "No entries match the filter." : "No entries yet. Drop a file or add an entry.";
+      tr.appendChild(td); tbody.appendChild(tr);
+    }
+    updateStats();
+  }
+  function focusRow(id) {
+    for (const tr of tbody.rows) { const inp = tr.querySelector("td.id input"); if (inp && parseInt(inp.value, 10) === id) { tr.querySelector("td.text input").focus(); tr.scrollIntoView({ block: "center" }); break; } }
+  }
+
+  // ---------- load ----------
+  async function loadFile(file) {
+    try {
+      const buf = await file.arrayBuffer();
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith(".csv") || lower.endsWith(".tsv") || lower.endsWith(".txt")) {
+        rows = parseCsv(new TextDecoder("utf-8").decode(buf));
+        baseName = file.name.replace(/\.(csv|tsv|txt)$/i, "");
+        showMsg("Loaded " + rows.length + " entries from " + file.name + ".", "ok");
+      } else {
+        const res = parseData(buf);
+        rows = res.rows;
+        baseName = file.name.replace(/\.data$/i, "");
+        showMsg("Loaded " + file.name + ": N = " + res.n + ", " + rows.length + " non-empty strings" + (res.flagsMissing ? " (flag table missing; defaulting to 0)" : "") + ".", "ok");
+      }
+      $("fileName").textContent = file.name;
+      filterEl.value = "";
+      render();
+    } catch (e) {
+      showMsg("Could not read " + file.name + ": " + (e && e.message ? e.message : e), "err");
+    }
+  }
+
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) loadFile(f); });
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => { e.preventDefault(); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) loadFile(f); });
+  $("fileInput").addEventListener("change", (e) => { const f = e.target.files && e.target.files[0]; if (f) loadFile(f); e.target.value = ""; });
+
+  filterEl.addEventListener("input", render);
+  showEmptyEl.addEventListener("change", render);
+  $("btnAddEnd").addEventListener("click", () => {
+    const nid = rows.length ? nextFreeId(Math.max(...rows.map((r) => r.id))) : 0;
+    rows.push({ id: nid, flag: 8, text: "", orig: null, origFlag: null }); filterEl.value = ""; render(); focusRow(nid);
+  });
+  let clearArmed = false;
+  $("btnClear").addEventListener("click", () => {
+    if (!rows.length) return;
+    if (!clearArmed) { clearArmed = true; $("btnClear").textContent = "Click again to confirm"; setTimeout(() => { clearArmed = false; $("btnClear").textContent = "Clear all"; }, 3000); return; }
+    clearArmed = false; $("btnClear").textContent = "Clear all";
+    rows = []; baseName = "strings_en_US"; $("fileName").textContent = "no file loaded"; filterEl.value = ""; showMsg("", ""); render();
+  });
+  const doExport = () => {
+    if (dupIds().size) { showMsg("Duplicate IDs: " + [...dupIds()].join(", ") + ". Fix them before exporting.", "err"); return; }
+    deliver(baseName + ".data", packData(), "application/octet-stream");
+  };
+  const doCsv = () => deliver(baseName + ".csv", toCsv(), "text/csv");
+  $("btnExport").addEventListener("click", doExport); $("btnExport2").addEventListener("click", doExport);
+  $("btnCsv").addEventListener("click", doCsv); $("btnCsv2").addEventListener("click", doCsv);
+
+  render();
+})();
+</script>
